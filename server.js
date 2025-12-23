@@ -1,12 +1,12 @@
 const express = require("express");
+const fetch = require("node-fetch");
 
 const app = express();
 app.use(express.json());
 
+const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
-const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
-const PORT = process.env.PORT || 8000;
 
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
@@ -14,43 +14,49 @@ app.get("/webhook", (req, res) => {
   const challenge = req.query["hub.challenge"];
 
   if (mode === "subscribe" && token === VERIFY_TOKEN) {
-    return res.status(200).send(challenge);
+    console.log("Webhook verified");
+    res.status(200).send(challenge);
+  } else {
+    res.sendStatus(403);
   }
-  return res.sendStatus(403);
 });
 
 app.post("/webhook", async (req, res) => {
   try {
     const entry = req.body.entry?.[0];
-    const change = entry?.changes?.[0];
-    const value = change?.value;
-    const message = value?.messages?.[0];
+    const changes = entry?.changes?.[0];
+    const message = changes?.value?.messages?.[0];
 
-    if (!message) return res.sendStatus(200);
+    if (message) {
+      const from = message.from;
+      const text = message.text?.body;
 
-    const from = message.from;
+      await fetch(
+        `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            messaging_product: "whatsapp",
+            to: from,
+            text: { body: `تم استلام رسالتك ✅\n\n${text}` },
+          }),
+        }
+      );
+    }
 
-    const r = await fetch(`https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        to: from,
-        text: { body: "أهلاً 👋 طلبك وصل." },
-      }),
-    });
-
-    const txt = await r.text();
-    console.log("send msg status:", r.status, txt);
-
-    return res.sendStatus(200);
+    res.sendStatus(200);
   } catch (e) {
-    console.log("webhook error:", e);
-    return res.sendStatus(200);
+    console.error(e);
+    res.sendStatus(500);
   }
 });
 
-app.listen(PORT, () => console.log("Running on", PORT));
+const PORT = process.env.port || 8000;
+app.listen(PORT, () => {
+  console.log("Server running on port", PORT);
+});
+
